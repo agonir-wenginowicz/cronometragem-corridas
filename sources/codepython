@@ -1,0 +1,81 @@
+import time
+import serial
+import csv
+import binascii
+from datetime import datetime
+from pathlib import Path
+
+# ------------- Configurações -------------
+serial_port   = 'COM3'
+baud_rate     = 115200
+read_interval = 5                   # segundos
+csv_file      = 'etiquetas_passagens.csv'   # onde salvar as passagens
+map_file      = 'atletas.csv' # arquivo de dicionário externo
+# -----------------------------------------
+
+def carregar_mapeamento(arquivo_csv: str) -> dict[str, str]:
+    """
+    Lê o arquivo CSV de mapeamento e devolve um dicionário:
+        {etiqueta: nome}
+    """
+    mapeamento = {}
+    path = Path(arquivo_csv)
+    if not path.exists():
+        raise FileNotFoundError(
+            f'Arquivo de mapeamento "{arquivo_csv}" não encontrado. '
+            'Crie-o conforme o modelo.'
+        )
+    with path.open(newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for linha in reader:
+            chave = linha['etiqueta'].strip()
+            valor = linha['nome'].strip()
+            if chave:                       # ignora linhas vazias
+                mapeamento[chave] = valor
+    return mapeamento
+
+
+# Carrega o dicionário uma única vez
+etiqueta_nome_mapping = carregar_mapeamento(map_file)
+
+# Inicializa a conexão serial
+ser = serial.Serial(serial_port, baud_rate, timeout=1)
+
+# Armazenar etiquetas lidas e o tempo da leitura
+read_tags = set()
+last_read_time = 0
+
+# Cria o arquivo CSV de passagens e escreve cabeçalho se ainda não existir
+with open(csv_file, mode='a', newline='', encoding='utf-8') as file:
+    writer = csv.writer(file)
+    if file.tell() == 0:
+        writer.writerow(['etiqueta', 'nome', 'timestamp'])
+
+    while True:
+        # Lê bytes quando houver dados na porta serial
+        if ser.in_waiting > 0:
+            atleta = binascii.hexlify(ser.read(28)).decode()  # bytes → str hex
+            current_rfid = atleta[45:47]                      # ajuste aqui se precisar
+
+            # Procura o nome no dicionário carregado
+            nome = etiqueta_nome_mapping.get(current_rfid, 'Desconhecido')
+
+            # Atualiza janela de leitura
+            current_time = time.time()
+            if current_time - last_read_time > read_interval:
+                read_tags.clear()
+                last_read_time = current_time
+
+            # Evita múltiplas leituras consecutivas da mesma etiqueta
+            if current_rfid not in read_tags:
+                print(f"Lido RFID: {current_rfid} - Nome: {nome}")
+                read_tags.add(current_rfid)
+
+                # Grava a passagem
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                writer.writerow([current_rfid, nome, timestamp])
+                file.flush()
+            else:
+                print("Leitura ignorada para evitar repetição da mesma etiqueta.")
+
+        time.sleep(0.2)  # Pequena pausa antes do próximo ciclo
