@@ -55,7 +55,7 @@ RFID2,Maria Souza
 1. Conecte o leitor RFID ao computador
 2. Execute o script:
    ```bash
-   python rfid_race_timing.py
+   python codepython
    ```
 3. O sistema irá:
    - Monitorar continuamente as tags RFID
